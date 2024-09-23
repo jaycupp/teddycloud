@@ -1,0 +1,57 @@
+# Use Alpine Linux as base image
+FROM alpine:latest as buildenv
+WORKDIR /base
+
+# Install necessary dependencies
+RUN apk --no-cache add gcc protobuf-c-dev build-base git zip curl
+
+# Copy source code and build
+COPY . /buildenv
+WORKDIR /buildenv
+
+RUN curl -f https://raw.githubusercontent.com/toniebox-reverse-engineering/tonies-json/release/tonies.json -o /buildenv/contrib/config/tonies.json || true
+RUN curl -f https://raw.githubusercontent.com/toniebox-reverse-engineering/tonies-json/release/tonieboxes.json -o /buildenv/contrib/config/tonieboxes.json || true
+# No libsanitizie support in alpine
+RUN make -f make zip NO_SANITIZERS=1
+#RUN make preinstall
+
+# Use Alpine Linux as base image for the final image
+FROM alpine:latest
+EXPOSE 80 443
+
+# Install necessary runtime dependencies
+RUN apk --no-cache add ffmpeg curl ca-certificates bash
+
+# Update CA certificates
+RUN update-ca-certificates
+
+# Create necessary directories
+RUN mkdir -p /teddycloud/certs \
+    && mkdir /teddycloud/config \
+    && mkdir -p /teddycloud/data/content/default \
+    && mkdir -p /teddycloud/data/library \
+    && mkdir -p /teddycloud/data/firmware  \
+    && mkdir -p /teddycloud/data/www   \
+    && mkdir -p /tmp
+
+RUN ln -s /teddycloud /etc/teddycloud
+
+# Copy files from the build environment
+COPY --from=buildenv /buildenv/install/pre/certs/ /teddycloud/certs/
+COPY --from=buildenv /buildenv/install/pre/data/www/ /teddycloud/data/www/
+COPY --from=buildenv /buildenv/install/pre/*.sh /usr/local/bin/
+COPY --from=buildenv /buildenv/install/pre/teddycloud /usr/local/bin/teddycloud
+COPY --from=buildenv /buildenv/install/zip/release.zip /tmp/teddycloud.zip
+
+# Set up volumes
+VOLUME \
+    "/teddycloud/data/content" \
+    "/teddycloud/data/library" \
+    "/teddycloud/data/firmware" \
+    "/teddycloud/certs" \
+    "/teddycloud/config"
+
+# Copy entrypoint script and set permissions
+COPY docker/docker-entrypoint.sh /
+RUN chmod +rx /docker-entrypoint.sh
+ENTRYPOINT ["/docker-entrypoint.sh"]
